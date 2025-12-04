@@ -1,90 +1,139 @@
-import express from "express";
-import { createClient } from "@supabase/supabase-js";
-import fetch from "node-fetch";
-import { v4 as uuidv4 } from "uuid";
-import { exec } from "child_process";
-import fs from "fs";
+// server.js — FINAL WORKING VERSION
+
+const express = require("express");
+const fetch = require("node-fetch");
+const { createClient } = require("@supabase/supabase-js");
+const { v4: uuidv4 } = require("uuid");
+const { exec } = require("child_process");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
-app.use(express.json({ limit: "50mb" }));
+app.use(express.json({ limit: "200mb" }));
+app.use(express.urlencoded({ extended: true, limit: "200mb" }));
 
-// environment variables
+// -------------------------------
+// ENV VARIABLES
+// -------------------------------
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET || "videos";
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE);
+if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+  console.error("❌ Missing Supabase environment variables!");
+  process.exit(1);
+}
 
-// -----------------------------
-// Render mix endpoint
-// -----------------------------
+console.log("✅ Supabase URL:", SUPABASE_URL);
+console.log("✅ Supabase Bucket:", SUPABASE_BUCKET);
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+// -------------------------------
+// HELPERS
+// -------------------------------
+function runFFmpeg(cmd) {
+  return new Promise((resolve, reject) => {
+    exec(cmd, (err, stdout, stderr) => {
+      if (err) {
+        console.error("FFmpeg Error:", stderr);
+        return reject(stderr);
+      }
+      resolve(stdout);
+    });
+  });
+}
+
+// -------------------------------
+// MAIN ROUTE — /render
+// -------------------------------
 app.post("/render", async (req, res) => {
   try {
-    const { videoUrl, audioUrl, videoVolume, musicVolume } = req.body;
+    const { videoUrl, audioUrl, textLayers, filters } = req.body;
 
-    if (!videoUrl) return res.status(400).json({ error: "Missing videoUrl" });
+    if (!videoUrl) {
+      return res.status(400).json({ error: "Missing videoUrl" });
+    }
 
     const id = uuidv4();
-    const inputVideo = `/app/input-${id}.mp4`;
-    const inputAudio = `/app/input-${id}.mp3`;
-    const outputFile = `/app/output-${id}.mp4`;
+    const tempVideo = `/tmp/input_${id}.mp4`;
+    const tempAudio = `/tmp/audio_${id}.mp3`;
+    const finalOutput = `/tmp/output_${id}.mp4`;
 
-    // download source video
+    console.log("⬇️ Downloading video...");
     const videoResp = await fetch(videoUrl);
-    const videoBuf = await videoResp.arrayBuffer();
-    fs.writeFileSync(inputVideo, Buffer.from(videoBuf));
+    const videoBuffer = Buffer.from(await videoResp.arrayBuffer());
+    fs.writeFileSync(tempVideo, videoBuffer);
 
-    // optional audio
     if (audioUrl) {
+      console.log("⬇️ Downloading audio...");
       const audioResp = await fetch(audioUrl);
-      const audioBuf = await audioResp.arrayBuffer();
-      fs.writeFileSync(inputAudio, Buffer.from(audioBuf));
+      const audioBuffer = Buffer.from(await audioResp.arrayBuffer());
+      fs.writeFileSync(tempAudio, audioBuffer);
     }
 
-    // ffmpeg command
-    let cmd = "";
+    // -------------------------------
+    // FFmpeg Command
+    // -------------------------------
+    let ffmpegCmd = `ffmpeg -i "${tempVideo}"`;
 
     if (audioUrl) {
-      cmd = `
-        ffmpeg -i ${inputVideo} -i ${inputAudio} \
-        -filter_complex "[0:a]volume=${videoVolume}[v];[1:a]volume=${musicVolume}[m];[v][m]amix=inputs=2:normalize=1" \
-        -c:v copy -c:a aac ${outputFile}
-      `;
+      ffmpegCmd += ` -i "${tempAudio}" -map 0:v -map 1:a -c:v libx264 -c:a aac -shortest`;
     } else {
-      cmd = `ffmpeg -i ${inputVideo} -c:v copy -c:a aac ${outputFile}`;
+      ffmpegCmd += ` -c:v libx264 -c:a copy`;
     }
 
-    exec(cmd, async (err) => {
-      if (err) {
-        console.error(err);
-        return res.status(500).json({ error: "FFmpeg failed" });
-      }
+    ffmpegCmd += ` "${finalOutput}" -y`;
 
-      const finalFile = fs.readFileSync(outputFile);
+    console.log("🎬 Running FFmpeg...");
+    await runFFmpeg(ffmpegCmd);
 
-      const upload = await supabase.storage
-        .from("renders")
-        .upload(`output/${id}.mp4`, finalFile, {
-          contentType: "video/mp4",
-        });
+    // -------------------------------
+    // UPLOAD TO SUPABASE
+    // -------------------------------
+    console.log("⬆️ Uploading final MP4 to Supabase...");
 
-      if (upload.error) return res.status(500).json(upload.error);
+    const fileBuffer = fs.readFileSync(finalOutput);
+    const fileName = `renders/output_${id}.mp4`;
 
-      res.json({
-        status: "success",
-        url: `${SUPABASE_URL}/storage/v1/object/public/renders/output/${id}.mp4`,
+    const { error: uploadError } = await supabase.storage
+      .from(SUPABASE_BUCKET)
+      .upload(fileName, fileBuffer, {
+        contentType: "video/mp4",
+        upsert: true,
       });
 
-      // cleanup
-      fs.unlinkSync(inputVideo);
-      if (audioUrl) fs.unlinkSync(inputAudio);
-      fs.unlinkSync(outputFile);
+    if (uploadError) {
+      console.error(uploadError);
+      return res.status(500).json({ error: "Upload failed", detail: uploadError });
+    }
+
+    const { data: publicUrlData } = supabase.storage
+      .from(SUPABASE_BUCKET)
+      .getPublicUrl(fileName);
+
+    // Cleanup
+    try { fs.unlinkSync(tempVideo); } catch {}
+    try { fs.unlinkSync(tempAudio); } catch {}
+    try { fs.unlinkSync(finalOutput); } catch {}
+
+    console.log("🎉 Render complete:", publicUrlData.publicUrl);
+
+    return res.json({
+      success: true,
+      url: publicUrlData.publicUrl,
     });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: "Server error" });
+
+  } catch (err) {
+    console.error("Server Error:", err);
+    return res.status(500).json({ error: String(err) });
   }
 });
 
-app.listen(process.env.PORT || 8080, () =>
-  console.log("FFmpeg server running!")
-);
+// -------------------------------
+// START SERVER
+// -------------------------------
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => {
+  console.log(`🚀 FFmpeg render server running on port ${PORT}`);
+});
