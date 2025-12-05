@@ -1,6 +1,7 @@
 // server.js — FINAL WORKING VERSION
 
 const express = require("express");
+import cors from "cors";
 const fetch = require("node-fetch");
 const { createClient } = require("@supabase/supabase-js");
 const { v4: uuidv4 } = require("uuid");
@@ -11,6 +12,9 @@ const path = require("path");
 const app = express();
 app.use(express.json({ limit: "200mb" }));
 app.use(express.urlencoded({ extended: true, limit: "200mb" }));
+
+app.use(cors());
+app.use(express.json({ limit: "50mb" }));
 
 // -------------------------------
 // ENV VARIABLES
