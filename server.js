@@ -10,9 +10,9 @@ const fs = require("fs");
 
 const app = express();
 
-// ⭐ ENABLE CORS (Fixes browser errors)
+// ⭐ ENABLE CORS
 app.use(cors());
-app.options("/render", cors()); 
+app.options("/render", cors());
 
 // JSON body parsing
 app.use(express.json({ limit: "200mb" }));
