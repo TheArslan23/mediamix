@@ -1,24 +1,26 @@
-// server.js — FINAL WORKING VERSION
+// server.js — FINAL WORKING VERSION (CommonJS)
 
 const express = require("express");
-import cors from "cors";
+const cors = require("cors");
 const fetch = require("node-fetch");
 const { createClient } = require("@supabase/supabase-js");
 const { v4: uuidv4 } = require("uuid");
 const { exec } = require("child_process");
 const fs = require("fs");
-const path = require("path");
 
 const app = express();
+
+// ⭐ ENABLE CORS (Fixes browser errors)
+app.use(cors());
+app.options("/render", cors()); 
+
+// JSON body parsing
 app.use(express.json({ limit: "200mb" }));
 app.use(express.urlencoded({ extended: true, limit: "200mb" }));
 
-app.use(cors());
-app.use(express.json({ limit: "50mb" }));
-
-// -------------------------------
-// ENV VARIABLES
-// -------------------------------
+// -----------------------
+// ENVIRONMENT VARIABLES
+// -----------------------
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET || "videos";
@@ -33,9 +35,9 @@ console.log("✅ Supabase Bucket:", SUPABASE_BUCKET);
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-// -------------------------------
-// HELPERS
-// -------------------------------
+// -----------------------
+// HELPER — run FFmpeg
+// -----------------------
 function runFFmpeg(cmd) {
   return new Promise((resolve, reject) => {
     exec(cmd, (err, stdout, stderr) => {
@@ -48,12 +50,12 @@ function runFFmpeg(cmd) {
   });
 }
 
-// -------------------------------
+// -----------------------
 // MAIN ROUTE — /render
-// -------------------------------
+// -----------------------
 app.post("/render", async (req, res) => {
   try {
-    const { videoUrl, audioUrl, textLayers, filters } = req.body;
+    const { videoUrl, audioUrl } = req.body;
 
     if (!videoUrl) {
       return res.status(400).json({ error: "Missing videoUrl" });
@@ -76,9 +78,9 @@ app.post("/render", async (req, res) => {
       fs.writeFileSync(tempAudio, audioBuffer);
     }
 
-    // -------------------------------
+    // -----------------------
     // FFmpeg Command
-    // -------------------------------
+    // -----------------------
     let ffmpegCmd = `ffmpeg -i "${tempVideo}"`;
 
     if (audioUrl) {
@@ -92,11 +94,10 @@ app.post("/render", async (req, res) => {
     console.log("🎬 Running FFmpeg...");
     await runFFmpeg(ffmpegCmd);
 
-    // -------------------------------
-    // UPLOAD TO SUPABASE
-    // -------------------------------
-    console.log("⬆️ Uploading final MP4 to Supabase...");
-
+    // -----------------------
+    // UPLOAD RESULT
+    // -----------------------
+    console.log("⬆️ Uploading final video to Supabase...");
     const fileBuffer = fs.readFileSync(finalOutput);
     const fileName = `renders/output_${id}.mp4`;
 
@@ -116,7 +117,7 @@ app.post("/render", async (req, res) => {
       .from(SUPABASE_BUCKET)
       .getPublicUrl(fileName);
 
-    // Cleanup
+    // Cleanup temp files
     try { fs.unlinkSync(tempVideo); } catch {}
     try { fs.unlinkSync(tempAudio); } catch {}
     try { fs.unlinkSync(finalOutput); } catch {}
@@ -134,9 +135,9 @@ app.post("/render", async (req, res) => {
   }
 });
 
-// -------------------------------
+// -----------------------
 // START SERVER
-// -------------------------------
+// -----------------------
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`🚀 FFmpeg render server running on port ${PORT}`);
