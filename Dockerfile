@@ -7,13 +7,13 @@ RUN apt-get update && apt-get install -y ffmpeg && apt-get clean
 # Set working directory
 WORKDIR /app
 
-# Copy package.json only
-COPY package.json ./
+# Copy BOTH package.json and package-lock.json
+COPY package.json package-lock.json ./
 
-# Install dependencies normally (no lockfile required)
-RUN npm install --production
+# Install dependencies using lockfile
+RUN npm ci --omit=dev
 
-# Copy the rest of the files
+# Copy the rest of the project files
 COPY . .
 
 # Expose port
