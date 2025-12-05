@@ -1,5 +1,3 @@
-// server.js — FINAL WORKING VERSION (CommonJS)
-
 const express = require("express");
 const cors = require("cors");
 const fetch = require("node-fetch");
@@ -10,11 +8,11 @@ const fs = require("fs");
 
 const app = express();
 
-// ⭐ ENABLE CORS
+// ENABLE CORS (MUST BE FIRST)
 app.use(cors());
-app.options("/render", cors());
+app.options("*", cors());
 
-// JSON body parsing
+// Body parsers
 app.use(express.json({ limit: "200mb" }));
 app.use(express.urlencoded({ extended: true, limit: "200mb" }));
 
