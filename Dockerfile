@@ -1,5 +1,6 @@
 # Base image with Node + Debian (needed for ffmpeg)
-FROM node:18-bullseye
+FROM node:20-bullseye
+
 
 # Install ffmpeg
 RUN apt-get update && apt-get install -y ffmpeg && apt-get clean
