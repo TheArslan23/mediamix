@@ -87,15 +87,23 @@ app.post("/render", async (req, res) => {
     // -----------------------
     // FFmpeg Command
     // -----------------------
-    let ffmpegCmd = `ffmpeg -i "${tempVideo}"`;
+
+    let ffmpegCmd = `ffmpeg -y -i "${tempVideo}"`;
 
     if (audioUrl) {
-      ffmpegCmd += ` -i "${tempAudio}" -map 0:v -map 1:a -c:v libx264 -c:a aac -shortest`;
+      ffmpegCmd += ` -i "${tempAudio}" \
+      -filter_complex \
+      "[0:a]volume=1[a0]; \
+       [1:a]volume=1[a1]; \
+       [a0][a1]amix=inputs=2:dropout_transition=0[aout]" \
+      -map 0:v -map "[aout]" \
+      -c:v libx264 -c:a aac -shortest`;
     } else {
-      ffmpegCmd += ` -c:v libx264 -c:a copy`;
+      ffmpegCmd += ` -map 0:v -map 0:a? -c:v libx264 -c:a copy`;
     }
 
-    ffmpegCmd += ` "${finalOutput}" -y`;
+    ffmpegCmd += ` "${finalOutput}"`;
+
 
     console.log("🎬 Running FFmpeg...");
     await runFFmpeg(ffmpegCmd);
